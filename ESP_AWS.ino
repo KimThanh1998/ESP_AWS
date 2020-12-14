@@ -3,8 +3,9 @@
 #include <MQTTClient.h>
 #include <ArduinoJson.h>
 #include "WiFi.h"
-#include <BH1750FVI.h> // Sensor Library
+#include <BH1750.h> // Sensor Library
 #include <Wire.h> // I2C Library
+#include <analogWrite.h>
 
 #include <DHT.h>
 
@@ -17,7 +18,7 @@
 unsigned long lastMillis = 0;
 uint16_t Light_Intensity = 0;
 uint16_t SensorValue = 0;
-BH1750FVI LightSensor;
+BH1750 LightSensor(0x23);
 
 WiFiClientSecure net = WiFiClientSecure();
 MQTTClient client = MQTTClient(256);
@@ -70,7 +71,7 @@ void connectAWS()
 
 void publishMessage()
 {
-  if (millis() - lastMillis > 1000) {
+  if (millis() - lastMillis > 5000) {
     lastMillis = millis();
     float h = dht.readHumidity();
     // Read temperature as Celsius (the default)
@@ -100,31 +101,37 @@ void publishMessage()
     Serial.print(F("°C "));
     Serial.print(hif);
     Serial.println(F("°F"));
-    delay(2000);
+    delay(50);
 
-    Light_Intensity = LightSensor.GetLightIntensity();
+    Light_Intensity = LightSensor.readLightLevel();
+    Serial.println(Light_Intensity);
     delay(50);
 
     //Convert from scale (0, 65535) to (255, 0)
-    SensorValue = map(Light_Intensity, 0, 20000, 255, 0);
+    SensorValue = map(Light_Intensity, 0, 20000, 0, 255);
     //Force the value must be inside the range (0,255)
-    SensorValue = constrain(SensorValue,255,0);
-    digitalWrite(LED, SensorValue);
+    SensorValue = constrain(SensorValue, 0, 255);
+    analogWrite(LED, SensorValue);
 
     Serial.println(SensorValue);
+
+    StaticJsonDocument<200> doc;
 
     Motion_value = digitalRead(Motion);
     if(Motion_value == HIGH){
       Serial.println("Motion detected!");
+      doc["motion"] = "Motion detected!";
     }
     else if(Motion_value == LOW){
       Serial.println("No motion detected!");
+      doc["motion"] = "No motion detected!";
     }
     
-    StaticJsonDocument<200> doc;
     doc["time"] = millis();
     doc["temperature"] = t;
     doc["humidity"] = h;
+    doc["lux"] = SensorValue;
+    
     char jsonBuffer[512];
     serializeJson(doc, jsonBuffer); // print to client
   
@@ -155,11 +162,10 @@ void setup() {
   Serial.begin(9600);
   connectAWS();
   dht.begin();
+  Wire.begin();
   LightSensor.begin();
   pinMode(LED, OUTPUT);
   pinMode(Motion, INPUT);
-  LightSensor.SetAddress(Device_Address_L); //Address 0x5C
-  LightSensor.SetMode(Continuous_H_resolution_Mode);
 }
 
 void loop() {
